@@ -390,13 +390,15 @@ WaterfallIdPanel::WaterfallIdPanel(TciClient* tci, QWidget* parent)
 
     row1->addWidget(new QLabel(QStringLiteral("Row ms:")));
     m_rowMs = new QSpinBox;
-    m_rowMs->setRange(15, 200);
-    m_rowMs->setValue(40);  // 40 ms × 8 rows = ~320 ms for the paint
+    m_rowMs->setRange(15, 400);
+    m_rowMs->setValue(200);   // 200 ms × 8 rows = 1.6 s for the paint
     m_rowMs->setSuffix(QStringLiteral(" ms"));
     m_rowMs->setToolTip(QStringLiteral(
         "Audio duration of each pixel row. Slower → more pixels of vertical "
         "extent in the receiver's waterfall, more legible but longer TX. "
-        "40 ms is a reasonable default."));
+        "200 ms is a good default at typical scroll rates — values much "
+        "below ~100 ms tend to compress the characters vertically into "
+        "unreadable streaks."));
     row1->addWidget(m_rowMs);
     cfg->addLayout(row1);
 
@@ -451,13 +453,14 @@ WaterfallIdPanel::WaterfallIdPanel(TciClient* tci, QWidget* parent)
     // ── Operator notes (always visible — TX is loud and expensive) ──────
     auto* notes = new QLabel(QStringLiteral(
         "Setup expected on the radio side:\n"
-        "  • Slice 0 in USB (or USB-D / DIGU)\n"
+        "  • Slice 0 mode — auto-set to DIGU at Send, restored on Done/Abort.\n"
+        "    (AE only routes TCI audio to the modulator in digital modes.)\n"
         "  • Bandwidth ≥ 2.7 kHz (this tab spans 150–2850 Hz audio)\n"
-        "  • Output power dialled in — this sends at peak audio amplitude\n"
+        "  • Output power dialled in — this sends at the peak audio amplitude\n"
+        "    after a normalising headroom step (~0.9 of full scale).\n"
         "  • Antenna / dummy load connected — Send keys trx:0,true; for the\n"
         "    full duration of the painted text + optional CW ID, then unkeys.\n"
-        "  • This tab does NOT change mode or PTT-coordinator state for you.\n"
-        "    Abort stops audio mid-stream and sends trx:0,false; immediately."));
+        "  • Abort stops audio mid-stream, unkeys, and restores the mode."));
     notes->setStyleSheet(QStringLiteral(
         "color:#aab; padding:6px; background:#1a1e26;"
         "border:1px solid #2a3040; border-radius:3px;"));
@@ -484,6 +487,15 @@ WaterfallIdPanel::WaterfallIdPanel(TciClient* tci, QWidget* parent)
     connect(m_abortBtn,   &QPushButton::clicked, this, &WaterfallIdPanel::onAbortClicked);
     connect(m_saveWavBtn, &QPushButton::clicked, this, &WaterfallIdPanel::onSaveWavClicked);
 
+    // Subscribe to raw TCI lines so we can track slice 0 mode for the
+    // auto-DIGU-on-Send flip (and restore at end). MainWindow already
+    // connects this signal to its own parser, but Qt supports multiple
+    // slots on a signal so adding another subscriber is fine.
+    if (m_tci) {
+        connect(m_tci, &TciClient::rawMessageReceived,
+                this,  &WaterfallIdPanel::onTciLine);
+    }
+
     // Initial state — wait for a connection before the Send button is useful.
     m_sendBtn->setEnabled(false);
     setRunning(false);
@@ -501,11 +513,32 @@ void WaterfallIdPanel::onConnectionChanged(bool connected)
         setRunning(false);
         m_status->setText(QStringLiteral("aborted — connection dropped"));
         log(QStringLiteral("ABORT — server disconnect mid-transmit"), QStringLiteral("#ff7070"));
+        // Can't restore mode over a dead socket; drop the bookkeeping.
+        m_savedMode.clear();
     } else if (!connected) {
         m_status->setText(QStringLiteral("idle — connect first"));
+        // Tracked mode is meaningless across reconnects — the next mode:
+        // event will repopulate it.
+        m_currentMode.clear();
+        m_savedMode.clear();
     } else if (!m_streaming) {
         m_status->setText(QStringLiteral("ready"));
     }
+}
+
+void WaterfallIdPanel::onTciLine(const QString& line)
+{
+    // We only care about slice 0 mode/modulation lines.
+    //   mode:0,usb        (server → client)
+    //   modulation:0,digu (server → client, alternative form)
+    const int colon = line.indexOf(QLatin1Char(':'));
+    if (colon <= 0) return;
+    const QString cmd = line.left(colon).trimmed().toLower();
+    if (cmd != QStringLiteral("mode") && cmd != QStringLiteral("modulation"))
+        return;
+    const QStringList args = line.mid(colon + 1).split(QLatin1Char(','));
+    if (args.size() < 2 || args[0].trimmed() != QStringLiteral("0")) return;
+    m_currentMode = args[1].trimmed().toLower().remove(QLatin1Char(';'));
 }
 
 void WaterfallIdPanel::onSendClicked()
@@ -551,6 +584,27 @@ void WaterfallIdPanel::onSendClicked()
     m_streaming = true;
     setRunning(true);
 
+    // AE only routes TCI audio to dax_tx when slice 0 is in a digital
+    // mode (digu/digl/rtty/fdv*). If the operator left it in a voice
+    // mode (USB / LSB / AM / etc.) the audio is silently dropped on the
+    // PTT-coordinator path. Save the current mode, force DIGU, restore
+    // when we unkey. Same trick CalibrationPanel uses.
+    m_savedMode.clear();
+    if (!m_currentMode.isEmpty()
+        && m_currentMode != QStringLiteral("digu")
+        && m_currentMode != QStringLiteral("digl")
+        && m_currentMode != QStringLiteral("rtty")
+        && m_currentMode != QStringLiteral("fdv")
+        && m_currentMode != QStringLiteral("fdvu")
+        && m_currentMode != QStringLiteral("fdvl"))
+    {
+        m_savedMode = m_currentMode;
+        m_tci->send(QStringLiteral("modulation:0,digu;"));
+        log(QStringLiteral("auto-set slice 0 mode: %1 → DIGU (restored at end)")
+                .arg(m_savedMode.toUpper()),
+            QStringLiteral("#ffaa00"));
+    }
+
     // Key the radio.  We use the same "bare trx:0,true" idiom CalibrationPanel
     // uses — lets AetherSDR's TciServer own PTT coordination.
     m_tci->send(QStringLiteral("trx:0,true;"));
@@ -562,6 +616,14 @@ void WaterfallIdPanel::onAbortClicked()
     if (!m_streaming) return;
     m_audio->stop();
     if (m_tci) m_tci->send(QStringLiteral("trx:0,false;"));
+    // Restore slice mode if we force-flipped it for this run.
+    if (!m_savedMode.isEmpty() && m_tci) {
+        m_tci->send(QStringLiteral("modulation:0,%1;").arg(m_savedMode));
+        log(QStringLiteral("restored slice 0 mode: DIGU → %1 (after abort)")
+                .arg(m_savedMode.toUpper()),
+            QStringLiteral("#6b8099"));
+        m_savedMode.clear();
+    }
     m_streaming = false;
     m_buffer.clear();
     m_bufferPos = 0;
@@ -701,6 +763,14 @@ void WaterfallIdPanel::onAudioTick()
         // ALC and PA see a clean shutdown rather than an abrupt cliff.
         m_audio->stop();
         m_tci->send(QStringLiteral("trx:0,false;"));
+        // Restore slice mode if we force-flipped it for this run.
+        if (!m_savedMode.isEmpty()) {
+            m_tci->send(QStringLiteral("modulation:0,%1;").arg(m_savedMode));
+            log(QStringLiteral("restored slice 0 mode: DIGU → %1")
+                    .arg(m_savedMode.toUpper()),
+                QStringLiteral("#6b8099"));
+            m_savedMode.clear();
+        }
         m_streaming = false;
         setRunning(false);
         m_status->setText(QStringLiteral("done"));

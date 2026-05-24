@@ -49,6 +49,9 @@ public:
 
 public slots:
     void onConnectionChanged(bool connected);
+    // Watch incoming TCI lines for slice 0 mode/modulation events so we
+    // know what mode to restore at the end of a Send run.
+    void onTciLine(const QString& line);
 
 private slots:
     void onSendClicked();
@@ -106,6 +109,15 @@ private:
     QVector<float>    m_buffer;      // full mono audio (paint + optional CW)
     int               m_bufferPos{0};
     bool              m_streaming{false};
+
+    // Slice 0 mode tracking — AE's TciServer only routes TCI audio to
+    // dax_tx when slice 0 is in a digital mode (digu/digl/rtty/fdv*).
+    // We track the current mode from TCI events and, if Send is clicked
+    // while a voice mode is active, save it, force DIGU, and restore the
+    // original on completion / abort / disconnect. Same pattern as
+    // CalibrationPanel (TX Cal tab, commit 9a470af).
+    QString           m_currentMode;
+    QString           m_savedMode;
 
     // Constants — kept in the header for the static synthesis helpers
     // to share with the streaming logic.
