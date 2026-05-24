@@ -110,6 +110,8 @@ set(TCIMON_SOURCES
     src/MdnsBrowser.h
     src/DiscoveryDialog.cpp
     src/DiscoveryDialog.h
+    src/SignalPanel.cpp
+    src/SignalPanel.h
 )
 
 if(WIN32)

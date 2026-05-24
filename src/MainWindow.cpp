@@ -7,6 +7,7 @@
 #include "ConsolePanel.h"
 #include "DiscoveryDialog.h"
 #include "InspectorPanel.h"
+#include "SignalPanel.h"
 #include "ReplayPanel.h"
 #include "SwrPlot.h"
 #include "TciClient.h"
@@ -392,6 +393,16 @@ void MainWindow::buildUI()
 
     m_cal = new CalibrationPanel(m_tci);
     m_topTabs->addTab(m_cal, "TX Cal");
+
+    m_signal = new SignalPanel(m_tci);
+    m_topTabs->addTab(m_signal, "Signal");
+    // SignalPanel needs the binary stream + connection state directly —
+    // unlike the text-only tabs (which we fan out from onRawMessage),
+    // binary frames bypass the parsing pipeline entirely.
+    connect(m_tci, &TciClient::binaryFrameReceived,
+            m_signal, &SignalPanel::ingestFrame);
+    connect(m_tci, &TciClient::connectionChanged,
+            m_signal, &SignalPanel::onConnectionChanged);
 
     main->addWidget(m_topTabs, 1);
 

@@ -21,6 +21,26 @@ class QTimer;
 
 namespace TciMon {
 
+// TCI binary frame, as documented in ExpertSDR3 TCI spec v2.0 Stream struct
+// and mirrored by AetherSDR's TciServer (src/core/TciServer.cpp). Header is
+// 16 × uint32 = 64 bytes, followed by `length × channels × format-sized`
+// sample payload. We keep raw access so the Signal tab can display payload
+// however it wants without us re-interpreting on each ingest.
+struct TciBinaryFrame {
+    quint32 receiver{0};      // receiver/TRX number (0..7)
+    quint32 sampleRate{0};    // Hz
+    quint32 format{0};        // 0=int16, 1=int24, 2=int32, 3=float32
+    quint32 codec{0};         // 0 (uncompressed in current spec)
+    quint32 crc{0};           // unused
+    quint32 length{0};        // number of real samples in payload (per channel)
+    quint32 type{0};          // 0=IQ, 1=RX_AUDIO, 2=TX_AUDIO, 3=TX_CHRONO, 4=SPECTRUM (AetherSDR ext)
+    quint32 channels{0};      // 1 or 2
+    quint32 reserved[8]{};    // for SPECTRUM (AetherSDR): [0]=low Hz, [1]=high Hz
+    QByteArray payload;       // header-stripped raw bytes; sample interpretation per `format`
+    qint64    wallClockNs{0}; // monotonic ns at reception (filled by client, not on the wire)
+    quint32   counter{0};     // monotonic per-stream counter (filled by client, not on the wire)
+};
+
 class TciClient : public QObject {
     Q_OBJECT
 public:
@@ -40,12 +60,15 @@ public:
 signals:
     void connectionChanged(bool connected);
     void rawMessageReceived(const QString& line);
+    void binaryFrameReceived(const TciMon::TciBinaryFrame& frame);
+    void binaryFrameRejected(const QString& reason, int size);  // diagnostic: too-short / corrupt
     void errorTextReceived(const QString& text);   // descriptive socket error
 
 private slots:
     void onConnected();
     void onDisconnected();
     void onTextMessage(const QString& message);
+    void onBinaryMessage(const QByteArray& message);
     void onErrorOccurred();
     void onReconnectTimeout();
 
@@ -62,6 +85,7 @@ private:
     bool    m_connected{false};
     int     m_reconnectAttempts{0};
     QString m_lastError;
+    quint32 m_binaryCounter{0};   // monotonic, stamped on each successful frame
 };
 
 } // namespace TciMon

@@ -35,6 +35,7 @@ class ConsolePanel;
 class ComparePanel;
 class ReplayPanel;
 class CalibrationPanel;
+class SignalPanel;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -90,6 +91,7 @@ private:
     ComparePanel*     m_compare{};
     ReplayPanel*      m_replay{};
     CalibrationPanel* m_cal{};
+    SignalPanel*      m_signal{};
 
     // Connect bar
     QLineEdit*   m_hostEdit{};

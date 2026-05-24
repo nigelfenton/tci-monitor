@@ -2,8 +2,10 @@
 
 #include <QWebSocket>
 #include <QAbstractSocket>
+#include <QElapsedTimer>
 #include <QTimer>
 #include <QStringList>
+#include <cstring>
 
 namespace TciMon {
 
@@ -14,6 +16,16 @@ int backoffSeconds(int attempt) {
     if (attempt < 0) attempt = 0;
     return kBackoff[attempt < n ? attempt : n - 1];
 }
+
+// Process-wide monotonic clock used to stamp wallClockNs on inbound frames.
+// QElapsedTimer is monotonic (TimerType auto-selected per platform). We
+// start it lazily on first call so static-init order doesn't matter.
+qint64 monotonicNs() {
+    static QElapsedTimer t;
+    static bool started = false;
+    if (!started) { t.start(); started = true; }
+    return t.nsecsElapsed();
+}
 } // namespace
 
 TciClient::TciClient(QObject* parent)
@@ -23,9 +35,10 @@ TciClient::TciClient(QObject* parent)
 {
     m_reconnectTimer->setSingleShot(true);
 
-    connect(m_socket, &QWebSocket::connected,           this, &TciClient::onConnected);
-    connect(m_socket, &QWebSocket::disconnected,        this, &TciClient::onDisconnected);
-    connect(m_socket, &QWebSocket::textMessageReceived, this, &TciClient::onTextMessage);
+    connect(m_socket, &QWebSocket::connected,             this, &TciClient::onConnected);
+    connect(m_socket, &QWebSocket::disconnected,          this, &TciClient::onDisconnected);
+    connect(m_socket, &QWebSocket::textMessageReceived,   this, &TciClient::onTextMessage);
+    connect(m_socket, &QWebSocket::binaryMessageReceived, this, &TciClient::onBinaryMessage);
     // QWebSocket::errorOccurred was added in Qt 6.5; on 6.2–6.4 the signal is
     // the (overloaded) error(QAbstractSocket::SocketError).
 #if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
@@ -127,6 +140,48 @@ void TciClient::onTextMessage(const QString& message)
         const QString line = raw.trimmed();
         if (!line.isEmpty()) emit rawMessageReceived(line);
     }
+}
+
+void TciClient::onBinaryMessage(const QByteArray& message)
+{
+    // Per ExpertSDR3 TCI spec v2.0 Stream struct + AetherSDR's TciServer:
+    // header is 16 × uint32 = 64 bytes, written by direct memcpy of a
+    // little-endian-packed struct. Anything shorter is malformed.
+    constexpr int kHeaderBytes = 64;
+    if (message.size() < kHeaderBytes) {
+        emit binaryFrameRejected(
+            QStringLiteral("frame shorter than 64-byte header"),
+            message.size());
+        return;
+    }
+
+    TciBinaryFrame frame;
+    // Read header fields as little-endian uint32 from the raw bytes rather
+    // than memcpy'ing into a struct — keeps us safe against alignment and
+    // host-endianness assumptions if someone builds on a big-endian box.
+    const auto* p = reinterpret_cast<const unsigned char*>(message.constData());
+    auto readU32 = [&](int byteOffset) -> quint32 {
+        return  static_cast<quint32>(p[byteOffset])
+             | (static_cast<quint32>(p[byteOffset + 1]) <<  8)
+             | (static_cast<quint32>(p[byteOffset + 2]) << 16)
+             | (static_cast<quint32>(p[byteOffset + 3]) << 24);
+    };
+    frame.receiver   = readU32( 0);
+    frame.sampleRate = readU32( 4);
+    frame.format     = readU32( 8);
+    frame.codec      = readU32(12);
+    frame.crc        = readU32(16);
+    frame.length     = readU32(20);
+    frame.type       = readU32(24);
+    frame.channels   = readU32(28);
+    for (int i = 0; i < 8; ++i)
+        frame.reserved[i] = readU32(32 + 4 * i);
+
+    frame.payload    = message.mid(kHeaderBytes);
+    frame.wallClockNs = monotonicNs();
+    frame.counter    = ++m_binaryCounter;
+
+    emit binaryFrameReceived(frame);
 }
 
 void TciClient::scheduleReconnect()
