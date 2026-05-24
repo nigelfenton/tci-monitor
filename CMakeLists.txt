@@ -112,6 +112,8 @@ set(TCIMON_SOURCES
     src/DiscoveryDialog.h
     src/SignalPanel.cpp
     src/SignalPanel.h
+    src/WaterfallIdPanel.cpp
+    src/WaterfallIdPanel.h
 )
 
 if(WIN32)

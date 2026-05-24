@@ -36,6 +36,7 @@ class ComparePanel;
 class ReplayPanel;
 class CalibrationPanel;
 class SignalPanel;
+class WaterfallIdPanel;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -92,6 +93,7 @@ private:
     ReplayPanel*      m_replay{};
     CalibrationPanel* m_cal{};
     SignalPanel*      m_signal{};
+    WaterfallIdPanel* m_wfid{};
 
     // Connect bar
     QLineEdit*   m_hostEdit{};

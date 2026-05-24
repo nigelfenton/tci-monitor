@@ -8,6 +8,7 @@
 #include "DiscoveryDialog.h"
 #include "InspectorPanel.h"
 #include "SignalPanel.h"
+#include "WaterfallIdPanel.h"
 #include "ReplayPanel.h"
 #include "SwrPlot.h"
 #include "TciClient.h"
@@ -403,6 +404,13 @@ void MainWindow::buildUI()
             m_signal, &SignalPanel::ingestFrame);
     connect(m_tci, &TciClient::connectionChanged,
             m_signal, &SignalPanel::onConnectionChanged);
+
+    m_wfid = new WaterfallIdPanel(m_tci);
+    m_topTabs->addTab(m_wfid, "Waterfall ID");
+    // WaterfallIdPanel only needs to know when the connection comes/goes
+    // so it can enable/disable Send (TX needs the TCI server up).
+    connect(m_tci, &TciClient::connectionChanged,
+            m_wfid, &WaterfallIdPanel::onConnectionChanged);
 
     main->addWidget(m_topTabs, 1);
 
