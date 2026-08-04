@@ -1,3 +1,20 @@
+> ## ⚠ This project has moved — it is now **Shack-Bench**
+>
+> ### 👉 https://github.com/nigelfenton/shack-bench
+>
+> This repository is **archived and read-only**. Nothing has been lost: the
+> complete history, including everything here, continues in Shack-Bench.
+>
+> **Why the rename.** The app outgrew its name. "TCI Monitor" described a TCI
+> protocol inspector; it now also does closed-loop TX calibration and drives
+> bench instruments that have nothing to do with TCI — a RigExpert antenna
+> analyser, a NanoVNA, a tinySA spectrum analyser and a Hantek oscilloscope.
+> TCI monitoring is still there, it is simply no longer the whole story.
+>
+> **Also note:** Shack-Bench is **GPL-3.0**, where this repository was MIT.
+>
+> Open issues were moved across before archiving.
+
 # TCI Monitor
 
 A lightweight diagnostic tool for the **TCI** (Transceiver Control Interface)
